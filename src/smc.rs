@@ -32,9 +32,9 @@ struct SmcPLimitData {
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct SmcKeyInfoData {
-    data_size: u32,
-    data_type: u32,
-    data_attributes: u8,
+    pub data_size: u32,
+    pub data_type: u32,
+    pub data_attributes: u8,
 }
 
 #[repr(C)]
@@ -90,6 +90,154 @@ fn bytes_to_sp78(b: &[u8]) -> f32 {
     }
     let raw = i16::from_be_bytes([b[0], b[1]]);
     raw as f32 / 256.0
+}
+
+// ── Raw key dump ─────────────────────────────────────────────────────────────
+
+/// One enumerated SMC key plus its raw type info and payload bytes.
+/// Output of [`SmcConnection::dump_all`].
+#[derive(Clone)]
+pub struct RawSmcEntry {
+    /// Four-character key name, e.g. "PSTR", "PBwo", "TC0c".
+    pub key: String,
+    /// Four-character type tag, e.g. "flt", "sp78", "ui32" (trailing space stripped).
+    pub data_type: String,
+    /// Number of valid payload bytes (≤ 32).
+    pub data_size: u32,
+    /// Raw 32-byte SMC payload buffer (only the first `data_size` bytes are valid).
+    pub bytes: [u8; 32],
+}
+
+impl RawSmcEntry {
+    /// Format the payload as space-separated lowercase hex pairs.
+    pub fn bytes_hex(&self) -> String {
+        let n = (self.data_size as usize).min(32);
+        let mut s = String::with_capacity(n * 3);
+        for (i, b) in self.bytes[..n].iter().enumerate() {
+            if i > 0 {
+                s.push(' ');
+            }
+            s.push_str(&format!("{:02x}", b));
+        }
+        s
+    }
+
+    /// Decode the payload to a human-readable string for the well-known SMC types.
+    /// Mirrors iSMC's decoding for cross-reference with their `reports/` dumps.
+    /// Returns an empty string for types we don't understand — the caller can
+    /// still show the raw hex.
+    pub fn decoded(&self) -> String {
+        decode_smc_value(&self.data_type, &self.bytes, self.data_size)
+    }
+}
+
+/// Decode raw SMC payload bytes for known type tags.
+///
+/// Supported families (from iSMC's `smc/conv.go`, GPL-3.0):
+/// * `flt`      – IEEE 754 float, little-endian
+/// * `ioft`     – 48.16 unsigned fixed-point, little-endian
+/// * `fp1f`–`fpe2` – unsigned fixed-point Q*.* (big-endian)
+/// * `sp1e`–`spf0` – signed fixed-point Q*.* (big-endian)
+/// * `ui8`/`ui16`/`ui32`/`hex_` – big-endian unsigned integer
+/// * `si8`/`si16`/`si32` – big-endian signed integer
+/// * `flag`     – 0/1 boolean (rendered as "true"/"false")
+/// * `pwm`      – 16-bit big-endian percentage of 0xFFFF
+pub fn decode_smc_value(data_type: &str, bytes: &[u8; 32], size: u32) -> String {
+    if size == 0 {
+        return String::new();
+    }
+    let n = (size as usize).min(32);
+    let buf = &bytes[..n];
+    let t = data_type.trim_end_matches(['\0', ' ']);
+
+    match t {
+        "flt" => {
+            if n < 4 {
+                return String::new();
+            }
+            let v = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            format!("{}", v)
+        }
+        "ioft" => {
+            if n < 8 {
+                return String::new();
+            }
+            let raw = u64::from_le_bytes([
+                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+            ]);
+            format!("{}", raw as f32 / 65536.0)
+        }
+        "ui8" | "ui16" | "ui32" | "hex_" => {
+            format!("{}", be_uint(buf))
+        }
+        "si8" => format!("{}", buf[0] as i8),
+        "si16" => {
+            if n < 2 {
+                return String::new();
+            }
+            format!("{}", i16::from_be_bytes([buf[0], buf[1]]))
+        }
+        "si32" => {
+            if n < 4 {
+                return String::new();
+            }
+            format!("{}", i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]))
+        }
+        "flag" => format!("{}", be_uint(buf) == 1),
+        "pwm" => {
+            if n < 2 {
+                return String::new();
+            }
+            let raw = u16::from_be_bytes([buf[0], buf[1]]);
+            format!("{:.1}%", raw as f32 * 100.0 / 65536.0)
+        }
+        other => match fp_divisor(other) {
+            Some((div, signed)) => {
+                if n < 2 {
+                    return String::new();
+                }
+                let raw = u16::from_be_bytes([buf[0], buf[1]]);
+                let v = if signed {
+                    raw as i16 as f32 / div
+                } else {
+                    raw as f32 / div
+                };
+                format!("{}", v)
+            }
+            None => String::new(),
+        },
+    }
+}
+
+fn be_uint(buf: &[u8]) -> u32 {
+    let n = buf.len().min(4);
+    let mut total: u32 = 0;
+    for (i, b) in buf[..n].iter().enumerate() {
+        total |= (*b as u32) << ((n - 1 - i) * 8);
+    }
+    total
+}
+
+/// Returns `(divisor, signed)` for fixed-point fp/sp type tags.
+/// Naming convention: the digit pair encodes the integer/fraction split, e.g.
+/// `sp78` is signed Q7.8 → divisor 256 (= 1<<8), `fpe2` is unsigned Q14.2 → divisor 4 (= 1<<2).
+fn fp_divisor(t: &str) -> Option<(f32, bool)> {
+    if t.len() != 4 {
+        return None;
+    }
+    let bytes = t.as_bytes();
+    let signed = match bytes[0] {
+        b'f' if bytes[1] == b'p' => false,
+        b's' if bytes[1] == b'p' => true,
+        _ => return None,
+    };
+    let frac = match bytes[3] {
+        c @ b'0'..=b'9' => (c - b'0') as u32,
+        c @ b'a'..=b'f' => (c - b'a' + 10) as u32,
+        _ => return None,
+    };
+    let div = (1u32 << frac) as f32;
+    Some((div, signed))
 }
 
 // ── public interface ─────────────────────────────────────────────────────────
@@ -219,6 +367,12 @@ impl SmcConnection {
     pub fn read_key_raw(&mut self, key_str: &str) -> Result<(SmcKeyInfoData, [u8; 32])> {
         let key = fourcc(key_str);
         let info = self.read_key_info(key)?;
+        // Some Apple SMCs return kr=0 with size=0/type=0 when the FOURCC isn't
+        // present (e.g. `PBwo` on M5 Max). Treat that as a missing key so callers
+        // can `or_else` to a fallback key correctly.
+        if info.data_size == 0 || info.data_type == 0 {
+            bail!("SMC key {:?} not present (data_size=0)", key_str);
+        }
 
         let mut input = SmcKeyData::default();
         input.key = key;
@@ -243,7 +397,7 @@ impl SmcConnection {
     // ── SMC key enumeration ────────────────────────────────────────────────
 
     /// Get total number of keys in the SMC.
-    fn key_count(&self) -> u32 {
+    pub fn key_count(&self) -> u32 {
         let key = fourcc("#KEY");
         let mut input = SmcKeyData::default();
         input.key = key;
@@ -268,7 +422,7 @@ impl SmcConnection {
     }
 
     /// Get the FourCC key at a given index.
-    fn key_at_index(&self, index: u32) -> Option<u32> {
+    pub fn key_at_index(&self, index: u32) -> Option<u32> {
         let mut input = SmcKeyData::default();
         input.data8 = SMC_CMD_READ_INDEX;
         input.data32 = index;
@@ -278,6 +432,42 @@ impl SmcConnection {
             }
         }
         None
+    }
+
+    /// Enumerate every SMC key and return a snapshot of its type and bytes.
+    /// Output order matches the SMC's internal index ordering (alphabetical).
+    /// Skips keys whose info or value read fails.
+    pub fn dump_all(&mut self) -> Vec<RawSmcEntry> {
+        let count = self.key_count();
+        // Sane upper bound — current Apple Silicon Macs report ~1500–2700 keys.
+        // Guards against a corrupt #KEY value.
+        let count = count.min(8192);
+        let mut out = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let Some(key_fcc) = self.key_at_index(i) else {
+                continue;
+            };
+            let Ok((info, bytes)) = self.read_key_raw_by_fourcc(key_fcc) else {
+                continue;
+            };
+            out.push(RawSmcEntry {
+                key: fourcc_to_str(key_fcc),
+                data_type: fourcc_to_str(info.data_type),
+                data_size: info.data_size,
+                bytes,
+            });
+        }
+        out
+    }
+
+    fn read_key_raw_by_fourcc(&mut self, key: u32) -> Result<(SmcKeyInfoData, [u8; 32])> {
+        let info = self.read_key_info(key)?;
+        let mut input = SmcKeyData::default();
+        input.key = key;
+        input.data8 = SMC_CMD_READ_BYTES;
+        input.key_info = info;
+        let out = self.call(&input)?;
+        Ok((info, out.bytes))
     }
 
     // ── temperatures ─────────────────────────────────────────────────────────

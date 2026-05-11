@@ -137,10 +137,17 @@ o=ctypes.CDLL(ctypes.util.find_library('objc'))
 o.objc_getClass.restype=ctypes.c_void_p;o.objc_getClass.argtypes=[ctypes.c_char_p]
 o.sel_registerName.restype=ctypes.c_void_p;o.sel_registerName.argtypes=[ctypes.c_char_p]
 m=ctypes.CFUNCTYPE(ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p)(ctypes.cast(o.objc_msgSend,ctypes.c_void_p).value)
+mi=ctypes.CFUNCTYPE(ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_long)(ctypes.cast(o.objc_msgSend,ctypes.c_void_p).value)
 f=ctypes.CFUNCTYPE(ctypes.c_double,ctypes.c_void_p,ctypes.c_void_p)(ctypes.cast(o.objc_msgSend,ctypes.c_void_p).value)
+# Why this is done:
+# Some macOS versions still transiently surface the probe process in Dock.
+# We force prohibited activation policy immediately to keep it background-only.
+app_cls=o.objc_getClass(b'NSApplication')
+if app_cls:
+    app=m(app_cls,o.sel_registerName(b'sharedApplication'))
+    if app:
+        mi(app,o.sel_registerName(b'setActivationPolicy:'),2) # NSApplicationActivationPolicyProhibited
 screen_cls=o.objc_getClass(b'NSScreen')
-# Avoid sharedApplication: creating NSApplication makes the subprocess a GUI app
-# and causes Dock flashing when this probe runs periodically.
 s=m(screen_cls,o.sel_registerName(b'mainScreen'))
 if not s:
     screens=m(screen_cls,o.sel_registerName(b'screens'))
@@ -1044,7 +1051,14 @@ impl Sampler {
                     let temps = smc.read_temperatures();
                     let fans = smc.read_fans();
                     let sys_power = smc.read_system_power();
-                    let backlight_power = smc.read_f32("PDBR").unwrap_or(0.0);
+                    // PBwo is the new backlight rail on M5 Pro/Max/Neo (and A18);
+                    // PDBR ("Power Delivery Brightness") is the older XDR rail on M1-M4.
+                    // Try the new key first; on hardware where it doesn't exist
+                    // the call errors and we fall back transparently.
+                    let backlight_power = smc
+                        .read_f32("PBwo")
+                        .or_else(|_| smc.read_f32("PDBR"))
+                        .unwrap_or(0.0);
                     let adapter_power = smc.read_f32("PDTR").unwrap_or(0.0);
                     let wifi_power = smc.read_f32("wiPm").unwrap_or(0.0);
                     let usb_power_smc = smc.read_f32("PUSB").unwrap_or(0.0);

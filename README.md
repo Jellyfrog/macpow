@@ -95,6 +95,7 @@ macpow                    # TUI mode (default)
 macpow --json             # JSON output to stdout
 macpow --interval 500     # Set sampling interval in ms (default: 250)
 macpow --dump             # Dump IOReport channel names (diagnostics)
+macpow --dump-smc         # Dump every SMC key with type and value (diagnostics)
 ```
 
 ### Keybindings
@@ -127,8 +128,8 @@ Each data source runs in its own thread, updating shared metrics at its own pace
 | IOReport         | SoC power (Energy Model),                   |
 |                  | CPU/GPU frequencies (DVFS residency)        |
 | SMC              | System power (PSTR), display backlight     |
-|                  | (PDBR), adapter (PDTR), WiFi (wiPm),      |
-|                  | temps, fans                                |
+|                  | (PBwo on M5/Neo, PDBR on M1-M4),         |
+|                  | adapter (PDTR), WiFi (wiPm), temps, fans   |
 | IORegistry       | Battery, display brightness, keyboard PWM,  |
 |                  | USB devices, SSD model, disk I/O counters   |
 | CoreAudio        | Volume level, mute state                    |
@@ -148,7 +149,7 @@ Each data source runs in its own thread, updating shared metrics at its own pace
 | Media Engine, Camera (ISP) | IOReport | Direct energy measurement (AVE + MSR, ISP) |
 | Fabric (AMCC, DCS, FAB, AFR) | IOReport | Direct energy measurement |
 | Thunderbolt/PCIe | IOReport | Direct energy measurement (PCIe ports + controllers) |
-| Display backlight | SMC PDBR | Direct power rail measurement |
+| Display backlight | SMC PBwo (M5 Pro/Max/Neo, A18) / PDBR (M1-M4 XDR) | Direct power rail measurement |
 | Display controller | IOReport DISP/DISPEXT | Direct energy measurement (SoC + external) |
 | Power adapter | SMC PDTR | Direct power delivery measurement |
 | System total | SMC PSTR | Direct power rail measurement |
@@ -257,6 +258,7 @@ If per-core temperatures are missing or incorrect on your Mac, please open an is
 
 ```bash
 macpow --dump > dump.txt                       # IOReport channel names
+macpow --dump-smc > smc.txt                    # all SMC keys (incl. power rails)
 macpow --json > metrics.json                   # full metrics (Ctrl+C after ~15s)
 system_profiler SPHardwareDataType | head -10   # chip model
 ```

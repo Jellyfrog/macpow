@@ -1800,7 +1800,7 @@ impl App {
             rows.push(r);
         }
 
-        // ── Display (backlight from SMC PDBR + IOReport DISP/DISPEXT)
+        // ── Display (backlight from SMC PBwo/PDBR + IOReport DISP/DISPEXT)
         {
             let has_pdbr = m.backlight_power_w > 0.0;
             let bl_w = if has_pdbr {

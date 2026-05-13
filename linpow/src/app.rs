@@ -1,6 +1,6 @@
-use macpow::process_utils::command_output_timeout;
-use macpow::sma::TimeSma;
-use macpow::types::*;
+use linpow::sma::TimeSma;
+use linpow::sysfs;
+use linpow::types::*;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -1623,96 +1623,144 @@ impl App {
                     Style::default().fg(gpu_color),
                 ));
             }
-            rows.push(TreeRow::pw_full(
-                "ane",
-                Some("soc"),
-                &format!("{}├─ ", cp),
-                "ANE",
-                s.ane.get(),
-                w.ane,
-                "",
-                &temp_info("ANE"),
-                Style::default(),
-                pin("ane"),
-            ));
-            // ANE sub-engines (collapsed by default)
-            if m.soc.ane_parts.len() > 1 {
-                let ane_cont = format!("{}│  ", cp);
-                for (ai, (name, watts)) in m.soc.ane_parts.iter().enumerate() {
-                    let pfx = if ai == m.soc.ane_parts.len() - 1 {
-                        format!("{}└─ ", ane_cont)
+            // Hide SoC sub-nodes that have no data on this platform.
+            // The remaining tree picks the appropriate `└─` connector for
+            // whichever node ends up last.
+            let show_ane = m.soc.ane_w > 0.0 || !m.soc.ane_parts.is_empty();
+            let show_dram = m.dram_gb > 0 || m.soc.dram_w > 0.0;
+            let show_gpu_sram = m.soc.gpu_sram_w > 0.0;
+            let show_media = m.soc.media_w > 0.0;
+            let show_isp = m.soc.isp_w > 0.0;
+            let show_fabric = m.soc.fabric_w > 0.0;
+            let last_subnode = if show_fabric {
+                "fabric"
+            } else if show_isp {
+                "isp"
+            } else if show_media {
+                "media"
+            } else if show_gpu_sram {
+                "gpu_sram"
+            } else if show_dram {
+                "dram"
+            } else if show_ane {
+                "ane"
+            } else {
+                ""
+            };
+            let connector = |name: &str| -> String {
+                if name == last_subnode {
+                    format!("{}└─ ", cp)
+                } else {
+                    format!("{}├─ ", cp)
+                }
+            };
+
+            if show_ane {
+                rows.push(TreeRow::pw_full(
+                    "ane",
+                    Some("soc"),
+                    &connector("ane"),
+                    "ANE",
+                    s.ane.get(),
+                    w.ane,
+                    "",
+                    &temp_info("ANE"),
+                    Style::default(),
+                    pin("ane"),
+                ));
+                // ANE sub-engines (collapsed by default)
+                if m.soc.ane_parts.len() > 1 {
+                    let ane_cont = if "ane" == last_subnode {
+                        format!("{}   ", cp)
                     } else {
-                        format!("{}├─ ", ane_cont)
+                        format!("{}│  ", cp)
                     };
-                    rows.push(TreeRow::pw(
-                        proc_key(&mut self.proc_keys, -(ai as i32 + 3000)),
-                        Some("ane"),
-                        &pfx,
-                        name,
-                        *watts,
-                        0.0,
-                        Style::default(),
-                        false,
-                    ));
+                    for (ai, (name, watts)) in m.soc.ane_parts.iter().enumerate() {
+                        let pfx = if ai == m.soc.ane_parts.len() - 1 {
+                            format!("{}└─ ", ane_cont)
+                        } else {
+                            format!("{}├─ ", ane_cont)
+                        };
+                        rows.push(TreeRow::pw(
+                            proc_key(&mut self.proc_keys, -(ai as i32 + 3000)),
+                            Some("ane"),
+                            &pfx,
+                            name,
+                            *watts,
+                            0.0,
+                            Style::default(),
+                            false,
+                        ));
+                    }
                 }
             }
-            let dram_name = if m.dram_gb > 0 {
-                format!("DRAM ({:.1}/{} GB)", m.mem_used_gb, m.dram_gb)
-            } else {
-                "DRAM".into()
-            };
-            rows.push(TreeRow::pw_full(
-                "dram",
-                Some("soc"),
-                &format!("{}├─ ", cp),
-                &dram_name,
-                s.dram.get(),
-                w.dram,
-                "",
-                &temp_info("Memory"),
-                Style::default(),
-                pin("dram"),
-            ));
-            rows.push(TreeRow::pw(
-                "gpu_sram",
-                Some("soc"),
-                &format!("{}├─ ", cp),
-                "GPU SRAM (SLC)",
-                s.gpu_sram.get(),
-                w.gpu_sram,
-                Style::default(),
-                pin("gpu_sram"),
-            ));
-            rows.push(TreeRow::pw(
-                "media",
-                Some("soc"),
-                &format!("{}├─ ", cp),
-                "Media Engine",
-                s.media.get(),
-                w.media,
-                Style::default(),
-                pin("media"),
-            ));
-            rows.push(TreeRow::pw(
-                "isp",
-                Some("soc"),
-                &format!("{}├─ ", cp),
-                "Camera (ISP)",
-                s.isp.get(),
-                w.isp,
-                Style::default(),
-                pin("isp"),
-            ));
-            rows.push(TreeRow::pw(
-                "fabric",
-                Some("soc"),
-                &format!("{}└─ ", cp),
-                "Fabric",
-                s.fabric.get(),
-                w.fabric,
-                Style::default(),
-                pin("fabric"),
-            ));
+            if show_dram {
+                let dram_name = if m.dram_gb > 0 {
+                    format!("DRAM ({:.1}/{} GB)", m.mem_used_gb, m.dram_gb)
+                } else {
+                    "DRAM".into()
+                };
+                rows.push(TreeRow::pw_full(
+                    "dram",
+                    Some("soc"),
+                    &connector("dram"),
+                    &dram_name,
+                    s.dram.get(),
+                    w.dram,
+                    "",
+                    &temp_info("Memory"),
+                    Style::default(),
+                    pin("dram"),
+                ));
+            }
+            if show_gpu_sram {
+                rows.push(TreeRow::pw(
+                    "gpu_sram",
+                    Some("soc"),
+                    &connector("gpu_sram"),
+                    "GPU SRAM (SLC)",
+                    s.gpu_sram.get(),
+                    w.gpu_sram,
+                    Style::default(),
+                    pin("gpu_sram"),
+                ));
+            }
+            if show_media {
+                rows.push(TreeRow::pw(
+                    "media",
+                    Some("soc"),
+                    &connector("media"),
+                    "Media Engine",
+                    s.media.get(),
+                    w.media,
+                    Style::default(),
+                    pin("media"),
+                ));
+            }
+            if show_isp {
+                rows.push(TreeRow::pw(
+                    "isp",
+                    Some("soc"),
+                    &connector("isp"),
+                    "Camera (ISP)",
+                    s.isp.get(),
+                    w.isp,
+                    Style::default(),
+                    pin("isp"),
+                ));
+            }
+            if show_fabric {
+                rows.push(TreeRow::pw(
+                    "fabric",
+                    Some("soc"),
+                    &connector("fabric"),
+                    "Fabric",
+                    s.fabric.get(),
+                    w.fabric,
+                    Style::default(),
+                    pin("fabric"),
+                ));
+            }
         }
 
         // ── SSD with Controller/NAND sub-items
@@ -1839,9 +1887,9 @@ impl App {
                     parts.push(short_preset_name(&m.display.preset_name).into());
                 } else {
                     let class = match m.display.panel_class {
-                        macpow::types::PanelClass::Sdr => "SDR",
-                        macpow::types::PanelClass::Hdr => "HDR",
-                        macpow::types::PanelClass::Xdr => "XDR",
+                        PanelClass::Sdr => "SDR",
+                        PanelClass::Hdr => "HDR",
+                        PanelClass::Xdr => "XDR",
                     };
                     parts.push(class.into());
                 }
@@ -3363,6 +3411,7 @@ fn fan_key(index: usize) -> &'static str {
 /// Assign PowerOutDetails entries to USB devices without duplicates.
 /// Returns one Option<f32> per device. Priority: exact location_id match,
 /// then port_idx_b (upper byte — root hub / controller), then port_idx_a.
+#[allow(clippy::needless_range_loop)]
 fn assign_usb_port_power(ports: &[UsbPortPower], devices: &[UsbDevice]) -> Vec<Option<f32>> {
     let mut result = vec![None; devices.len()];
     if ports.is_empty() {
@@ -3438,26 +3487,41 @@ fn proc_key(cache: &mut std::collections::HashMap<i32, &'static str>, pid: i32) 
 }
 
 fn read_machine_name() -> String {
-    let chip = command_output_timeout(
-        "sysctl",
-        &["-n", "machdep.cpu.brand_string"],
-        std::time::Duration::from_millis(500),
-    )
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    .filter(|s| !s.is_empty());
-    let model = command_output_timeout(
-        "sysctl",
-        &["-n", "hw.model"],
-        std::time::Duration::from_millis(500),
-    )
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    .filter(|s| !s.is_empty());
+    let chip = read_cpu_model().filter(|s| !s.is_empty());
+    let model = read_dmi_product().filter(|s| !s.is_empty());
     match (chip, model) {
         (Some(c), Some(m)) => format!("{} ({})", c, m),
         (Some(c), None) => c,
         (None, Some(m)) => m,
-        _ => "Mac".into(),
+        _ => "Linux".into(),
     }
+}
+
+fn read_cpu_model() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("model name") {
+            if let Some((_, value)) = rest.split_once(':') {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_dmi_product() -> Option<String> {
+    let candidates = [
+        "/sys/devices/virtual/dmi/id/product_version",
+        "/sys/devices/virtual/dmi/id/product_name",
+    ];
+    for path in candidates {
+        if let Ok(s) = sysfs::read_string(path) {
+            if !s.is_empty() && s != "None" && s != "To be filled by O.E.M." {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

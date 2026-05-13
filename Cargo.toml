@@ -1,19 +1,21 @@
 [package]
-name = "linpow"
-version = "0.1.0"
+name = "macpow"
+version = "0.1.19"
 edition = "2021"
-description = "Real-time power consumption monitor for Linux ThinkPad X1 (Intel)"
+description = "Real-time power consumption monitor for Apple Silicon Macs"
 license = "MIT"
-keywords = ["linux", "power", "monitor", "tui", "thinkpad"]
+repository = "https://github.com/k06a/macpow"
+homepage = "https://github.com/k06a/macpow"
+keywords = ["apple-silicon", "power", "monitor", "tui", "macos"]
 categories = ["command-line-utilities", "hardware-support"]
 readme = "README.md"
 
 [lib]
-name = "linpow"
+name = "macpow"
 path = "src/lib.rs"
 
 [[bin]]
-name = "linpow"
+name = "macpow"
 path = "src/main.rs"
 required-features = ["cli"]
 
@@ -28,6 +30,8 @@ clap = { version = "4", features = ["derive"], optional = true }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
 libc = "0.2"
 unicode-width = { version = "0.2.0", optional = true }
 
@@ -35,3 +39,13 @@ unicode-width = { version = "0.2.0", optional = true }
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
 bin-dir = "{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "data_sources"
+harness = false
+
+[workspace]
+members = ["linpow"]

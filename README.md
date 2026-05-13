@@ -1,93 +1,101 @@
-# 🐧🔋 linpow – Real-time power tree TUI for Linux ThinkPad X1
+# 💻🔋 macpow – Real-time power tree TUI for Apple Silicon
 
-Linux counterpart to [macpow](https://github.com/k06a/macpow), with a 1:1 copy
-of the UI. Targets ThinkPad X1 (Intel CPU + iGPU). Reads from sysfs, procfs,
-hwmon, and Intel RAPL; designed to run **both as a regular user and as root**
-with graceful degradation when permissions are missing.
+[![CI](https://github.com/k06a/macpow/actions/workflows/ci.yml/badge.svg)](https://github.com/k06a/macpow/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/macpow)](https://crates.io/crates/macpow)
+[![Homebrew](https://img.shields.io/badge/homebrew-v0.1.19-orange?logo=homebrew)](https://github.com/k06a/homebrew-tap)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Apple%20Silicon-black?logo=apple)](https://github.com/k06a/macpow)
+
+Real-time power consumption monitor for Apple Silicon Macs (M1–M5+).
+
+<p align="center">
+  <img src="./screenshot.png" width="75%" alt="macpow screenshot">
+</p>
+
+**macpow** reads directly from macOS hardware interfaces — IOReport, SMC, IORegistry, CoreAudio, and Mach/kernel APIs — to show per-component power draw, temperatures, frequencies, CPU utilization, and per-process energy attribution. No sudo required.
 
 ### Legend
 
 | Symbol | Meaning |
 |--------|---------|
 | `0.123 W` | Measured power (direct hardware reading) |
-| `≈0.123 W` | Estimated power (model-based) |
+| `≈0.123 W` | Estimated power (model-based calculation) |
 | `≤0.123 W` | Upper-bound power estimate |
 | `▸` | Pinned resource (sparkline chart visible) |
-| `▓▓▓░░░░░░░` | CPU core utilization bar |
+| `▓▓▓░░░░░░░` | CPU core utilization bar (filled = busy) |
 | `37°C` | Fresh temperature reading |
-| `~37°C` | Stale temperature (sensor read failed, last known value) |
+| `~37°C` | Stale temperature (sensor read failed, showing last known value) |
 | `pending…` | Data source still initializing |
 | `[dead]` | Process has exited (energy total preserved) |
-| **Bold** | Section headers |
-| Green | Low power (< 1 W) |
-| Yellow | Moderate power (1–5 W) |
-| Orange | High power (5–10 W) |
-| Red | Very high power (> 10 W) |
+| **Bold white** | Section headers and measured values |
+| <span style="color:green">Green</span> | Low power (< 1W) or info-only rows |
+| <span style="color:goldenrod">Yellow</span> | Moderate power (1–5W) |
+| <span style="color:orange">Orange</span> | High power (5–10W) |
+| <span style="color:red">Red</span> | Very high power (> 10W) |
+| Gray | Dimmed/inactive items |
 
-## Data sources
+## Features
 
-| Subsystem | Source |
-|-----------|--------|
-| CPU package / cores / uncore / DRAM power | `/sys/class/powercap/intel-rapl:*` |
-| Per-core utilization | `/proc/stat` |
-| Per-core frequency | `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` |
-| Hybrid P/E split | `/sys/devices/cpu_core/cpus`, `/sys/devices/cpu_atom/cpus` |
-| Memory | `/proc/meminfo` |
-| iGPU frequency | `/sys/class/drm/card*/gt_*_freq_mhz` |
-| Battery | `/sys/class/power_supply/BAT*/` |
-| AC adapter | `/sys/class/power_supply/AC*/` |
-| Temperatures | `/sys/class/hwmon/*/temp*_input` (coretemp, nvme, iwlwifi, thinkpad, acpitz) |
-| Fans | `/sys/class/hwmon/*/fan*_input` |
-| Display backlight | `/sys/class/backlight/intel_backlight/` |
-| Keyboard backlight | `/sys/class/leds/tpacpi::kbd_backlight/` |
-| Network bytes | `/proc/net/dev`, `/sys/class/net/` |
-| Disk I/O | `/sys/block/*/stat` |
+- **SoC breakdown** — CPU (E/P cores with per-core power, utilization bars, temperatures), GPU, ANE, DRAM, GPU SRAM, Media Engine, Camera (ISP), Fabric — all from IOReport Energy Model
+- **CPU utilization** — per-core usage % with visual bars from Mach `host_processor_info`
+- **Real frequencies** — CPU and GPU MHz from DVFS voltage-states tables, not percentages
+- **Temperatures** — per-component and per-core from SMC sensors (CPU, GPU, ANE, DRAM, SSD, Battery); universal bank-based key mapping for all Apple Silicon generations (M1–M5+, including Ultra dual-die); stale value caching with `~` indicator when sensors temporarily read invalid
+- **Memory** — used/total GB via `host_statistics64` Mach API
+- **Display** — brightness, panel class (SDR/HDR/XDR), refresh rate / ProMotion, live HDR-active indicator from `AppleARMBacklight` IOReport `DPB factor`, plus IOReport SoC display controller and external display power via DISPEXT
+- **Keyboard** — backlight brightness and estimated power via IORegistry PWM
+- **Battery** — voltage, amperage, charge %, time remaining, temperature, drain/charge rate
+- **SSD** — model, interconnect (Apple Fabric/PCIe), power estimation from IORegistry disk counters
+- **Peripherals** — Thunderbolt/PCIe (IOReport measured), Ethernet (link speed, per-interface traffic), WiFi (signal/mode/channel, per-interface traffic), Bluetooth devices with battery levels, USB devices (speed/power/I/O counters)
+- **Per-process energy** — dynamically-sized top processes by session energy (from `proc_pid_rusage`), with per-process disk I/O rates, network traffic (via nettop), RAM footprint, dead process detection
+- **Fans** — RPM and cubic power model per fan
+- **Collapsible tree** — fold/unfold with arrows, `+`/`-` for all
+- **Sparkline charts** — pin any resource with Space, inline 1-line history column at wide terminals
+- **Time-based SMA** — toggle 0s/5s/10s smoothing window
+- **Latency control** — toggle UI refresh rate: 500ms / 2s / 5s
+- **Mouse support** — click to select rows
+- **JSON mode** — pipe structured data for scripts and dashboards
+- **No sudo** — runs entirely with user-level permissions
 
 ## Install
 
-```
-cargo install --path .
-```
+### With cargo
 
-## Permissions
-
-linpow runs in **two modes**:
-
-**Plain user** (no setup): tree renders, but RAPL-derived power columns
-(CPU/GPU/DRAM watts) are blank and per-process attribution only sees your own
-processes. Everything else (CPU util, frequencies, temps, fans, battery, disk,
-network) works.
-
-**Full data**: install the udev rule so all users can read RAPL counters.
-
-```
-sudo cp etc/60-linpow.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger --subsystem-match=powercap
+```bash
+cargo install macpow
 ```
 
-Optionally lower `perf_event_paranoid` to enable iGPU per-engine busy
-counters via the i915/xe PMU (future phase):
+### From source
 
-```
-echo 1 | sudo tee /proc/sys/kernel/perf_event_paranoid
+```bash
+git clone https://github.com/k06a/macpow.git
+cd macpow
+cargo build --release
+./target/release/macpow
 ```
 
-At startup linpow prints a one-line capability summary to stderr so you can
-see what's blocked:
+### Homebrew
 
+```bash
+brew tap k06a/tap
+brew install macpow
 ```
-linpow: rapl=ok i915-pmu=denied(perf_event_paranoid=2) nvme-smart=denied all-procs=denied(non-root)
+
+### With pixi (conda-forge)
+
+```bash
+pixi global install macpow
+# execute without installing
+pixi exec macpow
 ```
 
 ## Usage
 
 ```
-linpow                  # Launch TUI at 250ms intervals
-linpow --interval 500   # Custom interval
-linpow --json           # Stream JSON to stdout instead of TUI
-linpow --dump           # Show discovered RAPL/hwmon paths (diagnostics)
-linpow --dump-hwmon     # Full hwmon enumeration with values
+macpow                    # TUI mode (default)
+macpow --json             # JSON output to stdout
+macpow --interval 500     # Set sampling interval in ms (default: 250)
+macpow --dump             # Dump IOReport channel names (diagnostics)
+macpow --dump-smc         # Dump every SMC key with type and value (diagnostics)
 ```
 
 ### Keybindings
@@ -107,32 +115,185 @@ linpow --dump-hwmon     # Full hwmon enumeration with values
 | `Home` | Jump to top |
 | Mouse click | Select row |
 
+All letter keys work on any keyboard layout (QWERTY, Russian, Dvorak, etc).
+
 ## Architecture
 
-Mirrors macpow's design exactly: one thread per data source, all updating a
-shared `Arc<Mutex<Metrics>>`. The TUI snapshots that struct each frame and
-never blocks on a slow source. Each sampler probes its inputs once at startup;
-on `EACCES` or `ENOENT` it goes silent for the session rather than spinning.
+Each data source runs in its own thread, updating shared metrics at its own pace. The TUI renders at the configured interval without blocking on slow sources.
 
 ```
-src/
-├── app.rs        # TUI rendering — preserved from macpow verbatim
-├── types.rs      # Metrics struct (== JSON schema) — verbatim
-├── sma.rs        # Time-weighted SMA — verbatim
-├── metrics.rs    # Sampler skeleton; spawns one thread per source
-├── caps.rs       # Capability probe + startup summary
-├── rapl.rs       # /sys/class/powercap/intel-rapl with wrap handling
-├── cpufreq.rs    # /proc/stat ticks + cpufreq + hybrid topology
-├── meminfo.rs    # /proc/meminfo
-├── hwmon.rs      # /sys/class/hwmon discovery & classification
-├── igpu.rs       # iGPU freq via /sys/class/drm/card*/gt_*_freq_mhz
-├── battery.rs    # /sys/class/power_supply BAT* + AC*
-├── netif.rs      # /proc/net/dev + /sys/class/net classification
-├── disk.rs       # /sys/block/*/stat
-├── display.rs    # backlight + EDID geometry
-└── sysfs.rs      # small helpers (read_string, read_parse, dir_entries)
++------------------+---------------------------------------------+
+| Data source      | What it provides                            |
++------------------+---------------------------------------------+
+| IOReport         | SoC power (Energy Model),                   |
+|                  | CPU/GPU frequencies (DVFS residency)        |
+| SMC              | System power (PSTR), display backlight     |
+|                  | (PBwo on M5/Neo, PDBR on M1-M4),         |
+|                  | adapter (PDTR), WiFi (wiPm), temps, fans   |
+| IORegistry       | Battery, display brightness, keyboard PWM,  |
+|                  | USB devices, SSD model, disk I/O counters   |
+| CoreAudio        | Volume level, mute state                    |
+| Mach API         | Per-CPU utilization ticks, memory stats      |
+| proc_pid_rusage  | Per-process billed energy                   |
+| getifaddrs       | Network traffic byte counters               |
+| CoreWLAN/pmset   | WiFi info, Bluetooth devices                |
+| IOPMAssertions   | Power assertions, audio playback detection  |
++------------------+---------------------------------------------+
 ```
+
+### Power measurements vs estimates
+
+| Component | Source | Method |
+|-----------|--------|--------|
+| CPU, GPU, ANE, DRAM | IOReport | Direct energy measurement (mJ/uJ/nJ deltas) |
+| Media Engine, Camera (ISP) | IOReport | Direct energy measurement (AVE + MSR, ISP) |
+| Fabric (AMCC, DCS, FAB, AFR) | IOReport | Direct energy measurement |
+| Thunderbolt/PCIe | IOReport | Direct energy measurement (PCIe ports + controllers) |
+| Display backlight | SMC PBwo (M5 Pro/Max/Neo, A18) / PDBR (M1-M4 XDR) | Direct power rail measurement |
+| Display controller | IOReport DISP/DISPEXT | Direct energy measurement (SoC + external) |
+| Power adapter | SMC PDTR | Direct power delivery measurement |
+| System total | SMC PSTR | Direct power rail measurement |
+| Battery | IORegistry | V * I calculation |
+| Per-process | Kernel | `ri_billed_energy` from rusage_info_v4 |
+| Per-process disk I/O | Kernel | `ri_diskio_bytesread/written` from rusage_info_v4 |
+| Per-process memory | Kernel | `ri_phys_footprint` from rusage_info_v4 |
+| Per-process network | nettop | Cumulative bytes per process (~18ms subprocess) |
+| CPU utilization | Mach API | `host_processor_info` tick deltas |
+| Memory | Mach API | `host_statistics64` (active + inactive + wired + compressor pages) |
+| Keyboard | IORegistry PWM | Duty cycle * 0.5W max |
+| Fans | SMC RPM | Cubic model: (RPM/RPM_max)^3 * 1W |
+| Audio | CoreAudio + IOPMAssertions | Idle 0.05W + volume^2 * 1W |
+| WiFi | SMC wiPm | Direct power measurement |
+| Bluetooth | pmset | Fixed per device type (0.01-0.05W) |
+| SSD | IORegistry counters | I/O utilization: 0.03-2.5W |
+| Ethernet | getifaddrs | Link detection, speed, per-interface traffic (data only) |
+| Network | getifaddrs | Per-interface byte counters for Ethernet and WiFi |
+| USB | IORegistry PowerOutDetails | Per-port power measurement (Watts/PDPowermW) |
+
+### IOReport channel naming (multi-die support)
+
+IOReport channel names vary between single-die and multi-die (Ultra) chips. The parser handles both generically:
+
+```
+Single-die (M1/M2/M3/M4 base/Pro/Max):
+  CPU Stats:    ECPU0, PCPU10             ← digit suffix
+  Energy Model: EACC_CPU0, PACC0_CPU5     ← _CPU suffix
+  Blocks:       ISP, DRAM, ANE, DISP      ← bare names
+
+Multi-die (M1/M2/M3 Ultra):
+  CPU Stats:    DIE_0_ECPU_CPU0, DIE_1_PCPU1_CPU3   ← DIE_N_ prefix + _CPU suffix
+  Energy Model: DIE_0_EACC_CPU0, DIE_1_PACC1_CPU3   ← DIE_N_ prefix + _CPU suffix
+  Blocks:       ISP0_0, DRAM0_1, ANE0_0              ← per-die suffix
+```
+
+Two design rules keep this forward-compatible with future chips:
+
+1. **`strip_die_prefix`** generically removes `DIE_{N}_` so downstream parsers always see the same base format
+2. **`starts_with`** matching for block power handles any suffix Apple may add (e.g. `ISP` matches `ISP`, `ISP0_0`, `ISP0_1`, etc.)
+
+If a new chip isn't detected correctly, run `macpow --dump` to see the raw IOReport channel names.
+
+## Requirements
+
+- macOS 12+ (Monterey or later)
+- Apple Silicon (M1, M2, M3, M4, M5 — any variant)
+- Rust 1.70+
+
+## Release checklist
+
+> **Toolchain pinning.** The repo ships a `rust-toolchain.toml` that pins
+> `stable`, matching `dtolnay/rust-toolchain@stable` in CI. Run
+> `rustup update stable` before each release so local clippy/fmt see the
+> same lints CI does — newly-promoted clippy lints have caused CI failures
+> after `cargo publish` already uploaded the broken version (immutable),
+> so this step is non-optional.
+
+```bash
+# 0. Make sure the toolchain matches CI exactly
+rustup update stable
+rustc --version    # note the version; CI is on the same `stable`
+
+# 1. Bump version
+vim Cargo.toml                        # update version = "X.Y.Z"
+
+# 2. Build, lint, test — must all pass before the version bump commit
+cargo fmt --check                     # formatting clean
+# Clippy: copy this command verbatim from .github/workflows/ci.yml.
+# CI does NOT pass --all-targets, so neither do we — adding it pulls in
+# benches/examples that CI ignores and would block the release.
+cargo clippy -- -D warnings -A clippy::field_reassign_with_default -A clippy::manual_c_str_literals -A clippy::manual_clamp -A clippy::manual_range_contains -A clippy::missing_safety_doc -A clippy::needless_range_loop
+cargo test                            # all tests pass
+cargo build --release                 # final binary build
+
+# 3. Dry-run the publish so any cargo-side issues show up before tagging
+cargo publish --dry-run
+
+# 4. Update Homebrew badge in README.md
+#    Change: homebrew-vX.Y.Z in the badge URL
+
+# 5. Commit, tag, push
+git add -A
+git commit -m "Bump version to X.Y.Z"
+git tag vX.Y.Z
+git push origin main --tags
+# CI will auto-create GitHub Release with binary
+
+# 6. Publish to crates.io  (immutable — only after CI is green!)
+cargo publish
+
+# 7. Update Homebrew tap (via PR to trigger bottle building)
+curl -sL https://github.com/k06a/macpow/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
+# Update url + sha256 in homebrew-tap/Formula/macpow.rb
+cd ../homebrew-tap
+git checkout main && git pull
+git checkout -b update-macpow-X.Y.Z
+# edit Formula/macpow.rb (url + sha256 only — bottle block is auto-rewritten)
+git commit -am "Update macpow to X.Y.Z"
+git push origin update-macpow-X.Y.Z
+# Create PR, wait for CI to build bottles, then add label "pr-pull"
+# publish.yml will upload bottles and merge the PR
+
+# 8. Update conda-forge feedstock
+cd ../macpow-feedstock
+git checkout main && git pull origin main
+git checkout -b bump-X.Y.Z
+# edit recipe/recipe.yaml: bump `version:` and update `sha256:` (same value as step 7)
+git commit -am "macpow vX.Y.Z"
+git push fork bump-X.Y.Z   # fork remote, since origin is conda-forge upstream
+# Open PR against conda-forge/macpow-feedstock from your fork branch
+```
+
+If CI fails AFTER you ran `cargo publish` (step 6), that crates.io version
+is immutable. Yank it (`cargo yank --version X.Y.Z`) and bump the patch
+number — don't try to force-push the tag.
+
+## Contributing
+
+Before submitting a PR, please run:
+
+```bash
+cargo fmt --check          # code formatting
+# Clippy: must match CI (see .github/workflows/ci.yml)
+cargo clippy -- -D warnings -A clippy::field_reassign_with_default -A clippy::manual_c_str_literals -A clippy::manual_clamp -A clippy::manual_range_contains -A clippy::missing_safety_doc -A clippy::needless_range_loop
+cargo test                 # unit + integration tests
+cargo build --release      # final build check
+```
+
+All four must pass with zero errors. Clippy needs the flags above so local runs match CI; without them, stable Clippy may report project-wide warnings that CI intentionally allows (FFI / Objective-C style).
+
+### Collecting diagnostics
+
+If per-core temperatures are missing or incorrect on your Mac, please open an issue with:
+
+```bash
+macpow --dump > dump.txt                       # IOReport channel names
+macpow --dump-smc > smc.txt                    # all SMC keys (incl. power rails)
+macpow --json > metrics.json                   # full metrics (Ctrl+C after ~15s)
+system_profiler SPHardwareDataType | head -10   # chip model
+```
+
+This helps add support for new Apple Silicon variants.
 
 ## License
 
-MIT
+[MIT](LICENSE)

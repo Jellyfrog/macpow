@@ -1,0 +1,14 @@
+# Allow non-root users to read Intel RAPL energy counters used by linpow.
+#
+# Background: CVE-2020-8694 mitigation made /sys/class/powercap/intel-rapl:*/energy_uj
+# root-only (mode 0400). Without that file, RAPL-derived power columns
+# (CPU, GPU, DRAM watts) are blank when linpow runs as a regular user.
+#
+# Install: copy to /etc/udev/rules.d/ and reload:
+#   sudo cp etc/60-linpow.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=powercap
+#
+# Alternative: setcap cap_dac_read_search+ep /path/to/linpow
+ACTION=="add", SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", \
+    RUN+="/bin/chmod g+r /sys%p/energy_uj"

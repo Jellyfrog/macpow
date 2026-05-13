@@ -1,6 +1,6 @@
-use macpow::process_utils::command_output_timeout;
-use macpow::sma::TimeSma;
-use macpow::types::*;
+use linpow::sma::TimeSma;
+use linpow::sysfs;
+use linpow::types::*;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -1839,9 +1839,9 @@ impl App {
                     parts.push(short_preset_name(&m.display.preset_name).into());
                 } else {
                     let class = match m.display.panel_class {
-                        macpow::types::PanelClass::Sdr => "SDR",
-                        macpow::types::PanelClass::Hdr => "HDR",
-                        macpow::types::PanelClass::Xdr => "XDR",
+                        PanelClass::Sdr => "SDR",
+                        PanelClass::Hdr => "HDR",
+                        PanelClass::Xdr => "XDR",
                     };
                     parts.push(class.into());
                 }
@@ -3363,6 +3363,7 @@ fn fan_key(index: usize) -> &'static str {
 /// Assign PowerOutDetails entries to USB devices without duplicates.
 /// Returns one Option<f32> per device. Priority: exact location_id match,
 /// then port_idx_b (upper byte — root hub / controller), then port_idx_a.
+#[allow(clippy::needless_range_loop)]
 fn assign_usb_port_power(ports: &[UsbPortPower], devices: &[UsbDevice]) -> Vec<Option<f32>> {
     let mut result = vec![None; devices.len()];
     if ports.is_empty() {
@@ -3438,26 +3439,41 @@ fn proc_key(cache: &mut std::collections::HashMap<i32, &'static str>, pid: i32) 
 }
 
 fn read_machine_name() -> String {
-    let chip = command_output_timeout(
-        "sysctl",
-        &["-n", "machdep.cpu.brand_string"],
-        std::time::Duration::from_millis(500),
-    )
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    .filter(|s| !s.is_empty());
-    let model = command_output_timeout(
-        "sysctl",
-        &["-n", "hw.model"],
-        std::time::Duration::from_millis(500),
-    )
-    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    .filter(|s| !s.is_empty());
+    let chip = read_cpu_model().filter(|s| !s.is_empty());
+    let model = read_dmi_product().filter(|s| !s.is_empty());
     match (chip, model) {
         (Some(c), Some(m)) => format!("{} ({})", c, m),
         (Some(c), None) => c,
         (None, Some(m)) => m,
-        _ => "Mac".into(),
+        _ => "Linux".into(),
     }
+}
+
+fn read_cpu_model() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/cpuinfo").ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("model name") {
+            if let Some((_, value)) = rest.split_once(':') {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_dmi_product() -> Option<String> {
+    let candidates = [
+        "/sys/devices/virtual/dmi/id/product_version",
+        "/sys/devices/virtual/dmi/id/product_name",
+    ];
+    for path in candidates {
+        if let Ok(s) = sysfs::read_string(path) {
+            if !s.is_empty() && s != "None" && s != "To be filled by O.E.M." {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

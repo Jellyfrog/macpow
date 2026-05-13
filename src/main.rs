@@ -1,7 +1,7 @@
 mod app;
 
-use macpow::metrics::Sampler;
-use macpow::types::Metrics;
+use linpow::metrics::Sampler;
+use linpow::types::Metrics;
 
 use anyhow::Result;
 use app::App;
@@ -18,7 +18,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
-#[command(name = env!("CARGO_PKG_NAME"), version, about = "Apple Silicon Power Monitor TUI")]
+#[command(name = env!("CARGO_PKG_NAME"), version, about = "Linux Power Monitor TUI (ThinkPad X1)")]
 struct CliArgs {
     /// Sampling interval in milliseconds
     #[arg(long, default_value_t = 250)]
@@ -28,15 +28,14 @@ struct CliArgs {
     #[arg(long)]
     json: bool,
 
-    /// Dump all IOReport channel names and exit (for diagnostics)
+    /// Dump discovered RAPL domains, hwmon devices, sysfs paths and exit (diagnostics)
     #[arg(long)]
     dump: bool,
 
-    /// Dump every SMC key (name, type, decoded value, raw bytes) and exit.
-    /// Output mirrors `iSMC raw` format for cross-reference. Useful for triaging
-    /// power readings on new hardware (see GitHub issue #12).
+    /// Dump every hwmon sensor (name, label, raw + decoded value) and exit.
+    /// Useful for triaging readings on new hardware.
     #[arg(long)]
-    dump_smc: bool,
+    dump_hwmon: bool,
 }
 
 fn main() -> Result<()> {
@@ -45,15 +44,17 @@ fn main() -> Result<()> {
     let json_mode = args.json;
 
     if args.dump {
-        match macpow::ioreport::IOReportSampler::new() {
-            Ok(ior) => ior.dump_channels(),
-            Err(e) => eprintln!("Failed to initialize IOReport: {e}\nThis Mac may not support the required IOReport channels."),
-        }
+        eprintln!("dump: not implemented yet");
         return Ok(());
     }
 
-    if args.dump_smc {
-        return run_dump_smc();
+    if args.dump_hwmon {
+        eprintln!("dump-hwmon: not implemented yet");
+        return Ok(());
+    }
+
+    if !json_mode {
+        eprintln!("{}", linpow::caps::summary());
     }
 
     let (tx, rx) = mpsc::sync_channel::<Metrics>(2);
@@ -144,29 +145,4 @@ fn run_tui(rx: mpsc::Receiver<Metrics>) -> Result<()> {
 
 extern "C" fn sigint_handler(_: libc::c_int) {
     std::process::exit(0);
-}
-
-/// Dump every SMC key in the same format as `iSMC raw`, so the output can be
-/// diffed against existing dumps in `dkorunic/iSMC/reports/`.
-fn run_dump_smc() -> Result<()> {
-    let mut smc =
-        macpow::smc::SmcConnection::open().map_err(|e| anyhow::anyhow!("SMC open failed: {e}"))?;
-    let entries = smc.dump_all();
-    if entries.is_empty() {
-        eprintln!("SMC: no keys returned (kernel may have refused enumeration)");
-        return Ok(());
-    }
-    for e in &entries {
-        let hex = e.bytes_hex();
-        let decoded = e.decoded();
-        if decoded.is_empty() {
-            println!("  {}  [{:<4}]  (bytes {})", e.key, e.data_type, hex);
-        } else {
-            println!(
-                "  {}  [{:<4}]  {} (bytes {})",
-                e.key, e.data_type, decoded, hex
-            );
-        }
-    }
-    Ok(())
 }

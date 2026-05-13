@@ -1,14 +1,18 @@
-#[cfg(not(target_os = "macos"))]
-compile_error!("macpow supports macOS targets only.");
+#[cfg(not(target_os = "linux"))]
+compile_error!("linpow supports Linux targets only.");
 
 pub mod battery;
-pub mod cf_utils;
-pub mod iokit_ffi;
-pub mod ioreport;
+pub mod caps;
+pub mod cpufreq;
+pub mod disk;
+pub mod display;
+pub mod hwmon;
+pub mod igpu;
+pub mod meminfo;
 pub mod metrics;
-pub mod peripherals;
-pub mod powermetrics;
+pub mod netif;
 pub mod process_utils;
+pub mod rapl;
 pub mod sma;
-pub mod smc;
+pub mod sysfs;
 pub mod types;

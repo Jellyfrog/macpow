@@ -46,3 +46,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "data_sources"
 harness = false
+
+[workspace]
+members = ["linpow"]
